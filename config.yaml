@@ -1,0 +1,44 @@
+# GitHub Opportunity Scraper Configuration
+
+# Target repositories (comma-separated list or leave empty to search by criteria)
+repositories: []
+
+# Search criteria (used if repositories is empty)
+search:
+  language: "" # e.g., "python", "javascript", "typescript"
+  min_stars: 1000
+  sort: "stars" # stars, forks, updated
+
+# Issue filters
+issues:
+  labels:
+    - "bug"
+    - "feature-request"
+    - "enhancement"
+    - "help-wanted"
+    - "good-first-issue"
+  state: "open" # open, closed, all
+  min_reactions: 0
+  min_comments: 0
+  max_issues_per_repo: 50
+
+# AI Analysis settings
+analysis:
+  model: "gemini-2.5-flash"
+  fallback_model: "gemini-2.0-flash-001"
+  min_opportunity_score: 25 # Only save opportunities with total_score >= this
+  temperature: 0.3
+
+# Rate limiting
+rate_limits:
+  github_requests_per_hour: 4000 # Stay under 5000 limit
+  gemini_requests_per_minute: 12 # Stay under 15 RPM limit
+  delay_between_requests: 0.1 # Seconds
+
+# Output settings
+output:
+  directory: "output"
+  json_filename: "opportunities.json"
+  csv_filename: "opportunities.csv"
+  sort_by: "total_score" # total_score, market_potential, etc.
+
