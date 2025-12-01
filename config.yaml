@@ -16,7 +16,6 @@ issues:
     - "feature-request"
     - "enhancement"
     - "help-wanted"
-    - "good-first-issue"
   state: "open" # open, closed, all
   min_reactions: 0
   min_comments: 0
@@ -41,4 +40,5 @@ output:
   json_filename: "opportunities.json"
   csv_filename: "opportunities.csv"
   sort_by: "total_score" # total_score, market_potential, etc.
+  cache_file: "output/searched_repos.json" # Cache file to track searched repositories
 

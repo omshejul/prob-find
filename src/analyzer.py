@@ -1,6 +1,5 @@
 """AI analyzer using Google Gemini API to score GitHub issues as business opportunities."""
 
-import os
 import time
 from typing import List, Optional
 from google import genai
@@ -9,6 +8,17 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from .models import GitHubIssue, OpportunityAnalysis
+from .exceptions import GeminiRateLimitExceeded
+
+try:
+    from google.genai.errors import RateLimitError  # type: ignore
+except ImportError:  # pragma: no cover
+    RateLimitError = None  # type: ignore
+
+try:
+    from google.api_core.exceptions import ResourceExhausted  # type: ignore
+except ImportError:  # pragma: no cover
+    ResourceExhausted = None  # type: ignore
 
 console = Console()
 
@@ -65,6 +75,25 @@ class OpportunityAnalyzer:
         self.requests_per_minute = requests_per_minute
         self.min_delay = 60.0 / requests_per_minute  # Minimum seconds between requests
         self.last_request_time = 0.0
+
+    @staticmethod
+    def _is_rate_limit_error(error: Exception) -> bool:
+        """Determine whether the provided error is a Gemini rate limit error."""
+        if RateLimitError is not None and isinstance(error, RateLimitError):
+            return True
+
+        if ResourceExhausted is not None and isinstance(error, ResourceExhausted):
+            return True
+
+        code = getattr(error, "code", None)
+        if isinstance(code, int) and code == 429:
+            return True
+
+        if isinstance(code, str) and code.upper() == "RESOURCE_EXHAUSTED":
+            return True
+
+        message = str(error).lower()
+        return any(keyword in message for keyword in ("rate limit", "quota", "resource exhausted"))
     
     def _rate_limit(self) -> None:
         """Enforce rate limiting."""
@@ -103,12 +132,15 @@ competition, and monetization fit. Be honest - most issues are NOT business oppo
     def _ensure_total_score(analysis: OpportunityAnalysis) -> OpportunityAnalysis:
         """Ensure total_score is populated even if the model omits it."""
         total = getattr(analysis, "total_score", None)
-        if not isinstance(total, int) or total == 0:
+        # Only recalculate if total_score is None or not an integer
+        # Note: total == 0 is impossible since all scores have ge=1 constraint (min total = 4)
+        if not isinstance(total, int):
+            # Use actual field values (guaranteed >= 1 by model constraints)
             analysis.total_score = (
-                getattr(analysis, "market_potential", 0)
-                + getattr(analysis, "technical_feasibility", 0)
-                + getattr(analysis, "competition", 0)
-                + getattr(analysis, "monetization_fit", 0)
+                analysis.market_potential +
+                analysis.technical_feasibility +
+                analysis.competition +
+                analysis.monetization_fit
             )
         return analysis
 
@@ -146,6 +178,9 @@ competition, and monetization fit. Be honest - most issues are NOT business oppo
             return self._ensure_total_score(analysis)
             
         except Exception as e:
+            if self._is_rate_limit_error(e):
+                raise GeminiRateLimitExceeded("Gemini API rate limit exceeded") from e
+
             console.print(f"[red]Error analyzing issue #{issue.issue_number} from {issue.repo}: {e}[/red]")
             
             # Try fallback model if primary fails
@@ -168,6 +203,8 @@ competition, and monetization fit. Be honest - most issues are NOT business oppo
                         return None
                     return self._ensure_total_score(fallback_analysis)
                 except Exception as e2:
+                    if self._is_rate_limit_error(e2):
+                        raise GeminiRateLimitExceeded("Gemini API rate limit exceeded") from e2
                     console.print(f"[red]Fallback model also failed: {e2}[/red]")
             
             return None
