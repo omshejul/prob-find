@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Optional, List
 import yaml
+import urllib.parse
+import urllib.request
 from dotenv import load_dotenv
 import typer
 from rich.console import Console
@@ -35,6 +37,46 @@ def load_config(config_path: str = "config.yaml") -> dict:
     
     with open(config_file, "r") as f:
         return yaml.safe_load(f)
+
+
+def send_notification(opportunity_count: int, notification_url: Optional[str] = None, user_name: str = "GitHub Scraper") -> None:
+    """
+    Send notification when opportunities are found.
+    
+    Args:
+        opportunity_count: Number of opportunities found
+        notification_url: URL to send notification to (from env var NOTIFICATION_URL)
+        user_name: Name to include in notification message
+    """
+    if not notification_url:
+        notification_url = os.getenv("NOTIFICATION_URL")
+    
+    if not notification_url:
+        return  # No notification URL configured, silently skip
+    
+    if opportunity_count == 0:
+        return  # Only notify when opportunities are found
+    
+    try:
+        # Format message: "Found X opportunities, Your Name"
+        message = f"Found {opportunity_count} opportunities, {user_name}"
+        
+        # Encode message for URL
+        encoded_msg = urllib.parse.quote(message)
+        
+        # Build URL with query parameter
+        url = f"{notification_url.rstrip('/')}?msg={encoded_msg}"
+        
+        # Send GET request
+        with urllib.request.urlopen(url, timeout=10) as response:
+            if response.status == 200:
+                console.print(f"[green]✓ Notification sent successfully[/green]")
+            else:
+                console.print(f"[yellow]⚠ Notification sent but received status {response.status}[/yellow]")
+    except urllib.error.URLError as e:
+        console.print(f"[yellow]⚠ Failed to send notification: {e}[/yellow]")
+    except Exception as e:
+        console.print(f"[yellow]⚠ Error sending notification: {e}[/yellow]")
 
 
 @app.command()
@@ -212,6 +254,12 @@ def run(
             title="Summary",
             border_style="green"
         ))
+        
+        # Send notification if opportunities found
+        if len(analyzed_issues) > 0:
+            user_name = os.getenv("USER_NAME", os.getenv("USER", "GitHub Scraper"))
+            notification_url = os.getenv("NOTIFICATION_URL")
+            send_notification(len(analyzed_issues), notification_url=notification_url, user_name=user_name)
 
     except GitHubRateLimitExceeded as exc:
         console.print(f"[red]GitHub rate limit exceeded: {exc}[/red]")
@@ -231,6 +279,8 @@ def check():
     # Check environment variables
     github_token = os.getenv("GITHUB_TOKEN")
     gemini_api_key = os.getenv("GEMINI_API_KEY")
+    notification_url = os.getenv("NOTIFICATION_URL")
+    user_name = os.getenv("USER_NAME")
     
     if github_token:
         console.print("[green]✓ GITHUB_TOKEN is set[/green]")
@@ -242,6 +292,18 @@ def check():
     else:
         console.print("[red]✗ GEMINI_API_KEY not set (required)[/red]")
         console.print("[yellow]Get your API key at: https://aistudio.google.com/apikey[/yellow]")
+    
+    if notification_url:
+        console.print(f"[green]✓ NOTIFICATION_URL is set[/green]")
+        console.print(f"   URL: {notification_url}")
+    else:
+        console.print("[yellow]⚠ NOTIFICATION_URL not set (optional - notifications disabled)[/yellow]")
+    
+    if user_name:
+        console.print(f"[green]✓ USER_NAME is set: {user_name}[/green]")
+    else:
+        default_name = os.getenv("USER", "GitHub Scraper")
+        console.print(f"[yellow]⚠ USER_NAME not set (will use: {default_name})[/yellow]")
     
     # Check config file
     config_path = Path("config.yaml")

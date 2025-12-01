@@ -46,6 +46,8 @@ class GitHubFetcher:
         "cheatsheet",
         "cheat-sheet",
         "book",
+        "Microsoft-Activation-Scripts",
+        "bootstrap",
         "books",
         "ebook",
         "ebooks",
