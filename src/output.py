@@ -62,7 +62,7 @@ class OutputWriter:
         sort_by: str = "total_score"
     ) -> None:
         """
-        Write opportunities to JSON file.
+        Write opportunities to JSON file (appends to existing file if present).
         
         Args:
             issues: List of GitHubIssue objects
@@ -74,39 +74,72 @@ class OutputWriter:
             console.print("[red]Error: Issues and analyses lists must have the same length[/red]")
             return
         
-        # Create opportunities list
-        opportunities = []
+        output_path = self.output_dir / filename
+        
+        # Load existing opportunities if file exists
+        existing_opportunities = []
+        if output_path.exists():
+            try:
+                with open(output_path, "r", encoding="utf-8") as f:
+                    existing_data = json.load(f)
+                    existing_opportunities = existing_data.get("opportunities", [])
+                    console.print(f"[yellow]Found {len(existing_opportunities)} existing opportunities[/yellow]")
+            except (json.JSONDecodeError, KeyError) as e:
+                console.print(f"[yellow]Warning: Could not load existing file, starting fresh: {e}[/yellow]")
+        
+        # Create new opportunities list
+        new_opportunities = []
         for issue, analysis in zip(issues, analyses):
-            opportunities.append(self._opportunity_to_dict(issue, analysis))
+            new_opportunities.append(self._opportunity_to_dict(issue, analysis))
+        
+        # Merge: Create a map of existing opportunities by unique key (repo_full_name + issue_number)
+        opportunity_map = {}
+        for opp in existing_opportunities:
+            key = f"{opp['repo_full_name']}#{opp['issue_number']}"
+            opportunity_map[key] = opp
+        
+        # Add/update with new opportunities (newer data overwrites older)
+        new_count = 0
+        updated_count = 0
+        for opp in new_opportunities:
+            key = f"{opp['repo_full_name']}#{opp['issue_number']}"
+            if key in opportunity_map:
+                updated_count += 1
+            else:
+                new_count += 1
+            opportunity_map[key] = opp  # Update or add
+        
+        # Convert map back to list
+        all_opportunities = list(opportunity_map.values())
         
         # Sort by specified field (descending)
         if sort_by == "total_score":
-            opportunities.sort(key=lambda x: x["ai_analysis"]["total_score"], reverse=True)
+            all_opportunities.sort(key=lambda x: x["ai_analysis"]["total_score"], reverse=True)
         elif sort_by == "market_potential":
-            opportunities.sort(key=lambda x: x["ai_analysis"]["market_potential"], reverse=True)
+            all_opportunities.sort(key=lambda x: x["ai_analysis"]["market_potential"], reverse=True)
         elif sort_by == "reactions":
-            opportunities.sort(key=lambda x: x["reactions"], reverse=True)
+            all_opportunities.sort(key=lambda x: x["reactions"], reverse=True)
         elif sort_by == "comments":
-            opportunities.sort(key=lambda x: x["comments"], reverse=True)
+            all_opportunities.sort(key=lambda x: x["comments"], reverse=True)
         
         # Write to file
-        output_path = self.output_dir / filename
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(
                 {
                     "metadata": {
                         "generated_at": datetime.now().isoformat(),
-                        "total_opportunities": len(opportunities),
+                        "total_opportunities": len(all_opportunities),
                         "sorted_by": sort_by,
                     },
-                    "opportunities": opportunities,
+                    "opportunities": all_opportunities,
                 },
                 f,
                 indent=2,
                 ensure_ascii=False,
             )
         
-        console.print(f"[green]✓ Wrote {len(opportunities)} opportunities to {output_path}[/green]")
+        console.print(f"[green]✓ Wrote {len(all_opportunities)} total opportunities to {output_path}[/green]")
+        console.print(f"[green]  → {new_count} new, {updated_count} updated[/green]")
     
     def write_csv(
         self,
@@ -116,7 +149,7 @@ class OutputWriter:
         sort_by: str = "total_score"
     ) -> None:
         """
-        Write opportunities to CSV file.
+        Write opportunities to CSV file (appends to existing file if present).
         
         Args:
             issues: List of GitHubIssue objects
@@ -128,25 +161,85 @@ class OutputWriter:
             console.print("[red]Error: Issues and analyses lists must have the same length[/red]")
             return
         
-        # Create opportunities list
-        opportunities = []
+        output_path = self.output_dir / filename
+        
+        # Load existing opportunities if file exists
+        existing_opportunities = []
+        if output_path.exists():
+            try:
+                with open(output_path, "r", newline="", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        # Convert back to opportunity dict structure
+                        opp = {
+                            "repo": row["repo"],
+                            "repo_full_name": row["repo_full_name"],
+                            "issue_number": int(row["issue_number"]),
+                            "title": row["title"],
+                            "url": row["url"],
+                            "labels": row["labels"].split(", ") if row["labels"] else [],
+                            "reactions": int(row["reactions"]),
+                            "comments": int(row["comments"]),
+                            "created_at": row["created_at"],
+                            "updated_at": row["updated_at"],
+                            "state": row["state"],
+                            "author": row["author"],
+                            "ai_analysis": {
+                                "market_potential": int(row["market_potential"]),
+                                "technical_feasibility": int(row["technical_feasibility"]),
+                                "competition": int(row["competition"]),
+                                "monetization_fit": int(row["monetization_fit"]),
+                                "total_score": int(row["total_score"]),
+                                "opportunity_summary": row["opportunity_summary"],
+                                "product_idea": row["product_idea"] or None,
+                                "skip_reason": row["skip_reason"] or None,
+                            },
+                            "scraped_at": row["scraped_at"],
+                        }
+                        existing_opportunities.append(opp)
+                    console.print(f"[yellow]Found {len(existing_opportunities)} existing opportunities[/yellow]")
+            except (csv.Error, KeyError, ValueError) as e:
+                console.print(f"[yellow]Warning: Could not load existing CSV, starting fresh: {e}[/yellow]")
+        
+        # Create new opportunities list
+        new_opportunities = []
         for issue, analysis in zip(issues, analyses):
             opp = self._opportunity_to_dict(issue, analysis)
-            opportunities.append(opp)
+            new_opportunities.append(opp)
+        
+        # Merge: Create a map of existing opportunities by unique key
+        opportunity_map = {}
+        for opp in existing_opportunities:
+            key = f"{opp['repo_full_name']}#{opp['issue_number']}"
+            opportunity_map[key] = opp
+        
+        # Add/update with new opportunities
+        new_count = 0
+        updated_count = 0
+        for opp in new_opportunities:
+            key = f"{opp['repo_full_name']}#{opp['issue_number']}"
+            if key in opportunity_map:
+                updated_count += 1
+            else:
+                new_count += 1
+            opportunity_map[key] = opp
+        
+        # Convert map back to list
+        all_opportunities = list(opportunity_map.values())
         
         # Sort by specified field (descending)
         if sort_by == "total_score":
-            opportunities.sort(key=lambda x: x["ai_analysis"]["total_score"], reverse=True)
+            all_opportunities.sort(key=lambda x: x["ai_analysis"]["total_score"], reverse=True)
         elif sort_by == "market_potential":
-            opportunities.sort(key=lambda x: x["ai_analysis"]["market_potential"], reverse=True)
+            all_opportunities.sort(key=lambda x: x["ai_analysis"]["market_potential"], reverse=True)
         elif sort_by == "reactions":
-            opportunities.sort(key=lambda x: x["reactions"], reverse=True)
+            all_opportunities.sort(key=lambda x: x["reactions"], reverse=True)
         elif sort_by == "comments":
-            opportunities.sort(key=lambda x: x["comments"], reverse=True)
+            all_opportunities.sort(key=lambda x: x["comments"], reverse=True)
         
         # Flatten for CSV
         csv_rows = []
-        for opp in opportunities:
+        for opp in all_opportunities:
             row = {
                 "repo": opp["repo"],
                 "repo_full_name": opp["repo_full_name"],
@@ -173,7 +266,6 @@ class OutputWriter:
             csv_rows.append(row)
         
         # Write to CSV
-        output_path = self.output_dir / filename
         if csv_rows:
             fieldnames = csv_rows[0].keys()
             with open(output_path, "w", newline="", encoding="utf-8") as f:
@@ -181,7 +273,8 @@ class OutputWriter:
                 writer.writeheader()
                 writer.writerows(csv_rows)
             
-            console.print(f"[green]✓ Wrote {len(csv_rows)} opportunities to {output_path}[/green]")
+            console.print(f"[green]✓ Wrote {len(csv_rows)} total opportunities to {output_path}[/green]")
+            console.print(f"[green]  → {new_count} new, {updated_count} updated[/green]")
         else:
             console.print("[yellow]No opportunities to write to CSV[/yellow]")
 
